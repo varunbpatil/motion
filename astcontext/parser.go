@@ -5,6 +5,9 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 // ParserOptions defines the options that changes the Parser's behavior
@@ -52,7 +55,7 @@ func NewParser(opts *ParserOptions) (*Parser, error) {
 			return nil, err
 		}
 	case opts.Dir != "":
-		p.pkgs, err = parser.ParseDir(fset, opts.Dir, nil, mode)
+		p.pkgs, err = parseDirRecursive(fset, opts.Dir, mode)
 		if err != nil {
 			return nil, err
 		}
@@ -66,4 +69,48 @@ func NewParser(opts *ParserOptions) (*Parser, error) {
 	}
 
 	return p, nil
+}
+
+func parseDirRecursive(fset *token.FileSet, dir string, mode parser.Mode) (pkgs map[string]*ast.Package, err error) {
+	infos, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	pkgs = make(map[string]*ast.Package)
+
+	var (
+		f *ast.File
+		d map[string]*ast.Package
+	)
+
+	for _, fi := range infos {
+		if fi.IsDir() && !strings.HasPrefix(fi.Name(), ".") {
+			d, err = parseDirRecursive(fset, filepath.Join(dir, fi.Name()), mode)
+			if err != nil {
+				return
+			}
+			for k, v := range d {
+				pkgs[k] = v
+			}
+		} else if strings.HasSuffix(fi.Name(), ".go") {
+			fname := filepath.Join(dir, fi.Name())
+			f, err = parser.ParseFile(fset, fname, nil, mode)
+			if err != nil {
+				return
+			}
+			pname := dir + "#" + f.Name.Name
+			pkg, found := pkgs[pname]
+			if !found {
+				pkg = &ast.Package{
+					Name:  pname,
+					Files: make(map[string]*ast.File),
+				}
+				pkgs[pname] = pkg
+			}
+			pkg.Files[fname] = f
+		}
+	}
+
+	return
 }
